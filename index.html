@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>React useEffect Cleanup — A Visual, Copy-Paste Guide</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #0f1220;
+      --panel: #14182a;
+      --text: #e6e9f2;
+      --muted: #aab1c7;
+      --accent: #7aa2ff;
+      --ok: #65d38a;
+      --warn: #ffc36d;
+      --err: #ff7a7a;
+      --code-bg: #0b0e1a;
+      --border: #1f2540;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+      background: linear-gradient(180deg, var(--bg), #0c1021 60%, #0a0e1e);
+      color: var(--text); line-height: 1.6;
+    }
+    header {
+      padding: 48px 20px 24px; text-align: center; border-bottom: 1px solid var(--border);
+      background: radial-gradient(1200px 600px at 50% -300px, rgba(122,162,255,0.15), transparent);
+    }
+    h1 { margin: 0 0 6px; font-size: 32px; letter-spacing: 0.4px; }
+    .sub { color: var(--muted); font-size: 15px; }
+    main { max-width: 1000px; margin: 0 auto; padding: 24px 16px 80px; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 20px; margin: 18px 0;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+    }
+    h2, h3 { margin: 8px 0 12px; }
+    .toc a { color: var(--accent); text-decoration: none; }
+    .toc ol { margin: 0; padding-left: 18px; }
+    pre {
+      background: var(--code-bg); color: #e8eaf3; padding: 14px 16px; border-radius: 12px; overflow: auto;
+      border: 1px solid var(--border);
+    }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 13.5px; }
+    .pair { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--border); background: #0c1021; color: var(--muted); }
+    .ok { color: var(--ok); border-color: rgba(101,211,138,0.35); }
+    .warn { color: var(--warn); border-color: rgba(255,195,109,0.35); }
+    .err { color: var(--err); border-color: rgba(255,122,122,0.35); }
+    .steps ol { margin: 0; padding-left: 18px; }
+    .tip { border-left: 3px solid var(--accent); padding-left: 10px; }
+    .callout { border-left: 4px solid var(--ok); padding-left: 12px; background: rgba(101,211,138,0.06); border-radius: 6px; }
+    .callout-warn { border-left-color: var(--warn); background: rgba(255,195,109,0.06); }
+    .callout-err { border-left-color: var(--err); background: rgba(255,122,122,0.06); }
+    a { color: var(--accent); }
+    footer { text-align: center; color: var(--muted); padding: 28px 16px 60px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>React <code>useEffect</code> Cleanup — The Complete Guide</h1>
+    <div class="sub">React 19 (and earlier) — why the cleanup matters, how it works, and bullet-proof patterns with broken vs fixed examples.</div>
+  </header>
+
+  <main>
+    <section class="card toc">
+      <h2 id="toc">Table of Contents</h2>
+      <ol>
+        <li><a href="#why">Why Cleanup Exists</a></li>
+        <li><a href="#when">Exactly When Cleanup Runs</a></li>
+        <li><a href="#pattern">The “Setup ↔ Cleanup” Pattern</a></li>
+        <li><a href="#interval">Timers/Intervals (Broken vs Fixed)</a></li>
+        <li><a href="#listener">DOM Event Listeners (Broken vs Fixed)</a></li>
+        <li><a href="#subscription">Subscriptions (RxJS/custom) (Broken vs Fixed)</a></li>
+        <li><a href="#fetch">Fetch + AbortController (Broken vs Fixed)</a></li>
+        <li><a href="#socket">WebSocket (Broken vs Fixed)</a></li>
+        <li><a href="#strict">React Strict Mode Notes (Dev)</a></li>
+        <li><a href="#mistakes">Common Mistakes & Anti-Patterns</a></li>
+        <li><a href="#checklist">Quick Checklist</a></li>
+        <li><a href="#repo">How to Use This in a GitHub Repo</a></li>
+      </ol>
+    </section>
+
+    <section class="card" id="why">
+      <h2>1) Why Cleanup Exists</h2>
+      <p>
+        Effects connect your component to the “outside world”: timers, event listeners, sockets, subscriptions, in-flight requests, etc.
+        Without cleanup, those resources keep running after the component changes or unmounts, causing memory leaks,
+        duplicate handlers, and warnings like <em>“Can’t perform a React state update on an unmounted component.”</em>
+      </p>
+    </section>
+
+    <section class="card" id="when">
+      <h2>2) Exactly When Cleanup Runs</h2>
+      <ul>
+        <li><strong>Before</strong> an effect re-runs due to a dependency change.</li>
+        <li>On <strong>unmount</strong> of the component.</li>
+        <li><strong>Strict Mode (dev only):</strong> React mounts → runs effect → immediately cleans up → mounts again.
+          This intentionally flushes bugs in setup/cleanup symmetry. Production runs once.</li>
+      </ul>
+      <div class="callout-warn">
+        <p><strong>Key idea:</strong> If an effect <em>sets up</em> something, its cleanup <em>must tear it down</em> — every time.</p>
+      </div>
+    </section>
+
+    <section class="card" id="pattern">
+      <h2>3) The “Setup ↔ Cleanup” Pattern</h2>
+      <pre><code>// Pseudocode
+useEffect(() =&gt; {
+  // SETUP: start interval / add listener / subscribe / open socket / start request
+  const resource = startSomething();
+
+  // CLEANUP mirrors setup: clear / remove / unsubscribe / close / abort
+  return () =&gt; stopSomething(resource);
+}, [dependencies]);</code></pre>
+      <p class="tip">Mirror your actions: <strong>add ↔ remove</strong>, <strong>start ↔ stop</strong>, <strong>subscribe ↔ unsubscribe</strong>, <strong>request ↔ abort</strong>.</p>
+    </section>
+
+    <!-- Timers -->
+    <section class="card" id="interval">
+      <h2>4) Timers &amp; Intervals</h2>
+      <div class="pair">
+        <div>
+          <span class="badge err">Broken</span>
+          <pre><code>import { useEffect, useState } from "react";
+
+function BrokenCounter() {
+  const [count, setCount] = useState(0);
+
+  useEffect(() =&gt; {
+    const id = setInterval(() =&gt; setCount(c =&gt; c + 1), 1000);
+    // ❌ no cleanup
+  }, []);
+
+  return &lt;h1&gt;Count: {count}&lt;/h1&gt;;
+}</code></pre>
+          <div class="callout-err">
+            <p><strong>Problem:</strong> Interval keeps running after unmount; leaks work, can update unmounted state.</p>
+          </div>
+        </div>
+        <div>
+          <span class="badge ok">Fixed</span>
+          <pre><code>import { useEffect, useState } from "react";
+
+function FixedCounter({ delay = 1000 }) {
+  const [count, setCount] = useState(0);
+
+  useEffect(() =&gt; {
+    const id = setInterval(() =&gt; setCount(c =&gt; c + 1), delay);
+    return () =&gt; clearInterval(id); // ✅ cleanup
+  }, [delay]); // changing delay: cleanup old interval, start new one
+
+  return &lt;h1&gt;Count: {count}&lt;/h1&gt;;
+}</code></pre>
+          <div class="callout">
+            <p><strong>Why this works:</strong> cleanup runs on dependency change and unmount.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="steps">
+        <h3>How to Test</h3>
+        <ol>
+          <li>Mount and unmount the component (navigate away/back) while DevTools Console is open.</li>
+          <li>Watch for stale increments or warnings after unmount in the broken version.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- Listeners -->
+    <section class="card" id="listener">
+      <h2>5) DOM Event Listeners</h2>
+      <div class="pair">
+        <div>
+          <span class="badge err">Broken</span>
+          <pre><code>import { useEffect, useState } from "react";
+
+function BrokenResize() {
+  const [w, setW] = useState(window.innerWidth);
+
+  useEffect(() =&gt; {
+    const onResize = () =&gt; setW(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    // ❌ never removed; multiple mounts pile up listeners
+  }, []);
+
+  return &lt;div&gt;Width: {w}&lt;/div&gt;;
+}</code></pre>
+          <div class="callout-err">
+            <p><strong>Problem:</strong> Each mount adds another listener; updates multiply and degrade performance.</p>
+          </div>
+        </div>
+        <div>
+          <span class="badge ok">Fixed</span>
+          <pre><code>import { useEffect, useState } from "react";
+
+function FixedResize() {
+  const [w, setW] = useState(window.innerWidth);
+
+  useEffect(() =&gt; {
+    const onResize = () =&gt; setW(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () =&gt; window.removeEventListener("resize", onResize); // ✅
+  }, []);
+
+  return &lt;div&gt;Width: {w}&lt;/div&gt;;
+}</code></pre>
+          <div class="callout">
+            <p><strong>Tip:</strong> Define the handler inside the effect so its identity is stable.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Subscriptions -->
+    <section class="card" id="subscription">
+      <h2>6) Subscriptions (RxJS / Custom APIs)</h2>
+      <div class="pair">
+        <div>
+          <span class="badge err">Broken</span>
+          <pre><code>import { useEffect, useState } from "react";
+import { messages$ } from "./bus";
+
+function BrokenSub() {
+  const [n, setN] = useState(0);
+
+  useEffect(() =&gt; {
+    const sub = messages$.subscribe(() =&gt; setN(v =&gt; v + 1));
+    // ❌ no sub.unsubscribe()
+  }, []);
+
+  return &lt;div&gt;Messages: {n}&lt;/div&gt;;
+}</code></pre>
+        </div>
+        <div>
+          <span class="badge ok">Fixed</span>
+          <pre><code>import { useEffect, useState } from "react";
+import { messages$ } from "./bus";
+
+function FixedSub() {
+  const [n, setN] = useState(0);
+
+  useEffect(() =&gt; {
+    const sub = messages$.subscribe(() =&gt; setN(v =&gt; v + 1));
+    return () =&gt; sub.unsubscribe(); // ✅
+  }, []);
+
+  return &lt;div&gt;Messages: {n}&lt;/div&gt;;
+}</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Fetch -->
+    <section class="card" id="fetch">
+      <h2>7) Fetch + AbortController</h2>
+      <p>Cleanup must be synchronous. Use an <code>AbortController</code> so cleanup cancels in-flight requests.</p>
+      <div class="pair">
+        <div>
+          <span class="badge err">Broken</span>
+          <pre><code>import { useEffect, useState } from "react";
+
+function BrokenUser({ id }) {
+  const [user, setUser] = useState(null);
+
+  useEffect(() =&gt; {
+    fetch(`/api/users/${id}`)
+      .then(r =&gt; r.json())
+      .then(setUser); // ❌ if id changes / unmounts, request may resolve late and set stale state
+  }, [id]);
+
+  return user ? &lt;pre&gt;{JSON.stringify(user, null, 2)}&lt;/pre&gt; : "Loading...";
+}</code></pre>
+        </div>
+        <div>
+          <span class="badge ok">Fixed</span>
+          <pre><code>import { useEffect, useState } from "react";
+
+function FixedUser({ id }) {
+  const [user, setUser] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() =&gt; {
+    const ac = new AbortController();
+
+    (async () =&gt; {
+      try {
+        const res = await fetch(`/api/users/${id}`, { signal: ac.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        setUser(await res.json());
+      } catch (e) {
+        if (e.name !== "AbortError") setError(e);
+      }
+    })();
+
+    return () =&gt; ac.abort(); // ✅ cancel on change/unmount
+  }, [id]);
+
+  if (error) return &lt;p&gt;Failed: {String(error)}&lt;/p&gt;;
+  return user ? &lt;pre&gt;{JSON.stringify(user, null, 2)}&lt;/pre&gt; : "Loading...";
+}</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- WebSocket -->
+    <section class="card" id="socket">
+      <h2>8) WebSocket</h2>
+      <div class="pair">
+        <div>
+          <span class="badge err">Broken</span>
+          <pre><code>import { useEffect, useState } from "react";
+
+function BrokenTicker({ symbol }) {
+  const [price, setPrice] = useState(null);
+
+  useEffect(() =&gt; {
+    const ws = new WebSocket(`wss://example.com?t=${symbol}`);
+    ws.onmessage = (e) =&gt; setPrice(JSON.parse(e.data).last);
+    // ❌ never closed
+  }, [symbol]);
+
+  return &lt;div&gt;{symbol}: {price ?? "—"}&lt;/div&gt;;
+}</code></pre>
+        </div>
+        <div>
+          <span class="badge ok">Fixed</span>
+          <pre><code>import { useEffect, useState } from "react";
+
+function FixedTicker({ symbol }) {
+  const [price, setPrice] = useState(null);
+
+  useEffect(() =&gt; {
+    const ws = new WebSocket(`wss://example.com?t=${symbol}`);
+    const onMessage = (e) =&gt; setPrice(JSON.parse(e.data).last);
+    ws.addEventListener("message", onMessage);
+
+    return () =&gt; {
+      ws.removeEventListener("message", onMessage);
+      ws.close(); // ✅ cleanup
+    };
+  }, [symbol]);
+
+  return &lt;div&gt;{symbol}: {price ?? "—"}&lt;/div&gt;;
+}</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Strict Mode -->
+    <section class="card" id="strict">
+      <h2>9) React Strict Mode Notes (Dev)</h2>
+      <ul>
+        <li>In development, Strict Mode may trigger: <code>setup → cleanup → setup</code> to expose non-idempotent effects.</li>
+        <li>If this double-run causes visible issues, your effect/cleanup isn’t symmetrical. Fix it—don’t code around it.</li>
+        <li>Production still runs once.</li>
+      </ul>
+    </section>
+
+    <!-- Mistakes -->
+    <section class="card" id="mistakes">
+      <h2>10) Common Mistakes &amp; Anti-Patterns</h2>
+      <ul>
+        <li><strong>Forgetting cleanup</strong> (timers, listeners, subs, sockets, requests).</li>
+        <li>Making the effect function <strong>async</strong>; keep cleanup synchronous and cancel async work in cleanup.</li>
+        <li><strong>Wrong dependencies</strong> causing repeated attach/remove churn or stale values. Be deliberate with the deps array.</li>
+        <li>Using effects for pure derivations (no external system). If you can compute in render, do so—fewer effects, fewer bugs.</li>
+      </ul>
+    </section>
+
+    <!-- Checklist -->
+    <section class="card" id="checklist">
+      <h2>11) Quick Checklist</h2>
+      <ul>
+        <li>Does your effect set up anything external? <em>Return a cleanup</em>.</li>
+        <li>Does cleanup perfectly mirror setup? (add/remove, start/stop, subscribe/unsubscribe, open/close, request/abort)</li>
+        <li>Will deps changing create duplicates? Ensure cleanup runs before re-setup.</li>
+        <li>In dev/Strict Mode, double-run still behaves? If not, fix symmetry.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    Robbie Sherre - <a href="https://www.idesigntek.com">iDesigntek</a>
+  </footer>
+</body>
+</html>
